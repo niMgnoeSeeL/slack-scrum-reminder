@@ -1,7 +1,6 @@
 name: Scrum DM reminders
 
 on:
-  # 수동 테스트 버튼 (Actions에서 Run workflow로 즉시 DM 보내기)
   workflow_dispatch:
     inputs:
       test_message:
@@ -9,17 +8,12 @@ on:
         required: false
         default: "Test: Slack DM from GitHub Actions ✅"
 
-  # 자동 스케줄 (GitHub cron은 UTC 기준)
-  # LA 기준 "전날 1pm"에 리마인더:
-  # - Tue 1:45pm scrum -> Mon 1pm
-  # - Thu 1:45pm scrum -> Wed 1pm
-  # - Fri 12:00pm scrum -> Thu 1pm
-  #
-  # 현재(1월) LA는 PST(UTC-8)라서 1pm = 21:00 UTC
+  # GitHub cron은 UTC 기준
+  # LA(PST, UTC-8) 기준 전날 1pm = 21:00 UTC
   schedule:
-    - cron: "0 21 * * 1"  # Mon 21:00 UTC = Mon 1pm PST -> Tue scrum reminder
-    - cron: "0 21 * * 3"  # Wed 21:00 UTC = Wed 1pm PST -> Thu scrum reminder
-    - cron: "0 21 * * 4"  # Thu 21:00 UTC = Thu 1pm PST -> Fri scrum reminder
+    - cron: "0 21 * * 1"  # Mon 1pm -> Tue 1:45pm scrum
+    - cron: "0 21 * * 3"  # Wed 1pm -> Thu 1:45pm scrum
+    - cron: "0 21 * * 4"  # Thu 1pm -> Fri 12:00pm scrum
 
 jobs:
   dm:
@@ -29,20 +23,14 @@ jobs:
       - name: Decide message
         id: msg
         run: |
-          # LA 시간 기준으로 메시지 결정
           export TZ="America/Los_Angeles"
-          TODAY_DOW=$(date +%a)   # Mon/Tue/Wed/Thu/Fri/...
+          TODAY_DOW=$(date +%a)
 
-          # 수동 실행(workflow_dispatch)이면 입력 메시지 그대로 사용
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "text=${{ github.event.inputs.test_message }}" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # schedule인 경우: 오늘이 Mon/Wed/Thu로 들어오게 설정되어 있음
-          # Mon -> Tue scrum(1:45pm)
-          # Wed -> Thu scrum(1:45pm)
-          # Thu -> Fri scrum(12:00pm)
           if [ "$TODAY_DOW" = "Mon" ]; then
             echo "text=Reminder for scrum tomorrow at 1:45 pm." >> $GITHUB_OUTPUT
           elif [ "$TODAY_DOW" = "Wed" ]; then
@@ -50,7 +38,6 @@ jobs:
           elif [ "$TODAY_DOW" = "Thu" ]; then
             echo "text=Reminder for scrum tomorrow at 12:00 pm." >> $GITHUB_OUTPUT
           else
-            # 안전장치: 예상 외 요일이면 전송하지 않음
             echo "text=" >> $GITHUB_OUTPUT
           fi
 
@@ -61,14 +48,10 @@ jobs:
           SLACK_USER_ID: ${{ secrets.SLACK_USER_ID }}
           TEXT: ${{ steps.msg.outputs.text }}
         run: |
-          # DM은 conversations.open 없이 User ID(U...)에 바로 postMessage 하는 방식이 가장 단순/안정적
-          curl -sS -X POST "https://slack.com/api/chat.postMessage" \
+          RESPONSE=$(curl -sS -X POST "https://slack.com/api/chat.postMessage" \
             -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
             -H "Content-type: application/json; charset=utf-8" \
-            --data "{\"channel\":\"$SLACK_USER_ID\",\"text\":\"$TEXT\"}" \
-            | python3 - << 'EOF'
-import sys, json
-r=json.load(sys.stdin)
-print("ok =", r.get("ok"))
-print("error =", r.get("error"))
-EOF
+            --data "{\"channel\":\"$SLACK_USER_ID\",\"text\":\"$TEXT\"}")
+
+          echo "Slack response:"
+          echo "$RESPONSE"

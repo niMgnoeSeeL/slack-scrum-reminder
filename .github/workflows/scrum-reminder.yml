@@ -1,47 +1,58 @@
-name: Scrum DM reminders
+name: Scrum reminders (DST-safe)
 
 on:
   workflow_dispatch:
     inputs:
       test_message:
-        description: "Send a one-off test DM"
+        description: "Send a one-off test reminder (DM + channel)"
         required: false
-        default: "Test: Slack DM from GitHub Actions ✅"
+        default: "Test: scrum reminder ✅"
 
-  # GitHub cron은 UTC 기준
-  # LA(PST, UTC-8) 기준 전날 1pm = 21:00 UTC
+  # DST-safe: 매시간 돌리고 LA 시간이 1pm일 때만 보냄
   schedule:
-    - cron: "0 21 * * 1"  # Mon 1pm -> Tue 1:45pm scrum
-    - cron: "0 21 * * 3"  # Wed 1pm -> Thu 1:45pm scrum
-    - cron: "0 21 * * 4"  # Thu 1pm -> Fri 12:00pm scrum
+    - cron: "0 * * * *"
 
 jobs:
-  dm:
+  remind:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Decide message
+      - name: Decide message (LA time gate)
         id: msg
         run: |
+          # LA 시간 기준으로 "지금이 1pm인지" 체크
           export TZ="America/Los_Angeles"
-          TODAY_DOW=$(date +%a)
 
+          # 수동 실행이면 입력 메시지 그대로 전송
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "text=${{ github.event.inputs.test_message }}" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          if [ "$TODAY_DOW" = "Mon" ]; then
+          HOUR=$(date +%H)   # 00-23
+          DOW=$(date +%a)    # Mon/Tue/Wed/Thu/Fri/Sat/Sun
+
+          # 1pm(13:00) 아니면 아무 것도 안 보냄
+          if [ "$HOUR" != "13" ]; then
+            echo "text=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 전날 1pm에 보낼 요일:
+          # Mon 1pm -> Tue scrum(1:45pm)
+          # Wed 1pm -> Thu scrum(1:45pm)
+          # Thu 1pm -> Fri scrum(12:00pm)
+          if [ "$DOW" = "Mon" ]; then
             echo "text=Reminder for scrum tomorrow at 1:45 pm." >> $GITHUB_OUTPUT
-          elif [ "$TODAY_DOW" = "Wed" ]; then
+          elif [ "$DOW" = "Wed" ]; then
             echo "text=Reminder for scrum tomorrow at 1:45 pm." >> $GITHUB_OUTPUT
-          elif [ "$TODAY_DOW" = "Thu" ]; then
+          elif [ "$DOW" = "Thu" ]; then
             echo "text=Reminder for scrum tomorrow at 12:00 pm." >> $GITHUB_OUTPUT
           else
             echo "text=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Send DM via Slack API
+      - name: Send DM
         if: steps.msg.outputs.text != ''
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -53,5 +64,20 @@ jobs:
             -H "Content-type: application/json; charset=utf-8" \
             --data "{\"channel\":\"$SLACK_USER_ID\",\"text\":\"$TEXT\"}")
 
-          echo "Slack response:"
+          echo "DM response:"
+          echo "$RESPONSE"
+
+      - name: Post to scrum channel
+        if: steps.msg.outputs.text != ''
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          TEXT: ${{ steps.msg.outputs.text }}
+        run: |
+          RESPONSE=$(curl -sS -X POST "https://slack.com/api/chat.postMessage" \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-type: application/json; charset=utf-8" \
+            --data "{\"channel\":\"$SLACK_CHANNEL_ID\",\"text\":\"$TEXT\"}")
+
+          echo "Channel response:"
           echo "$RESPONSE"

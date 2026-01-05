@@ -1,0 +1,75 @@
+name: Scrum DM reminders
+
+on:
+  # 수동 테스트 버튼 (Actions에서 Run workflow로 즉시 DM 보내기)
+  workflow_dispatch:
+    inputs:
+      test_message:
+        description: "Send a one-off test DM"
+        required: false
+        default: "Test: Slack DM from GitHub Actions ✅"
+
+  # 자동 스케줄: LA 기준 전날 1pm에 보낼 거라,
+  # GitHub cron(UTC) 기준으로는 아래 3번 실행하면 됨.
+  # - Tue 1:45pm scrum -> Mon 1pm reminder
+  # - Thu 1:45pm scrum -> Wed 1pm reminder
+  # - Fri 12pm scrum   -> Thu 1pm reminder
+  #
+  # ⚠️ 아래는 'PST(UTC-8)' 기준: 1pm PST = 21:00 UTC
+  schedule:
+    - cron: "0 21 * * 1"  # Monday 21:00 UTC  = Mon 1pm PST
+    - cron: "0 21 * * 3"  # Wednesday 21:00 UTC = Wed 1pm PST
+    - cron: "0 21 * * 4"  # Thursday 21:00 UTC  = Thu 1pm PST
+
+jobs:
+  dm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide message
+        id: msg
+        run: |
+          # LA timezone 기준으로 "내일" 요일에 따라 메시지 생성
+          export TZ="America/Los_Angeles"
+          TODAY_DOW=$(date +%a)   # Mon/Tue/Wed/Thu/Fri/...
+          # workflow_dispatch면 입력 메시지 그대로
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "text=${{ github.event.inputs.test_message }}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # schedule인 경우: 오늘이 Mon/Wed/Thu 중 하나로 들어오게 되어있음
+          # 내일 scrum 시간은:
+          # Mon -> Tue 1:45pm
+          # Wed -> Thu 1:45pm
+          # Thu -> Fri 12:00pm
+          if [ "$TODAY_DOW" = "Mon" ]; then
+            echo "text=Reminder for scrum tomorrow at 1:45 pm." >> $GITHUB_OUTPUT
+          elif [ "$TODAY_DOW" = "Wed" ]; then
+            echo "text=Reminder for scrum tomorrow at 1:45 pm." >> $GITHUB_OUTPUT
+          elif [ "$TODAY_DOW" = "Thu" ]; then
+            echo "text=Reminder for scrum tomorrow at 12:00 pm." >> $GITHUB_OUTPUT
+          else
+            # 안전장치: 예상 외 요일이면 아무것도 안 보냄
+            echo "text=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send DM via Slack API
+        if: steps.msg.outputs.text != ''
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_USER_ID: ${{ secrets.SLACK_USER_ID }}
+          TEXT: ${{ steps.msg.outputs.text }}
+        run: |
+          # 1) DM 채널 열기 (conversations.open)
+          DM_CHANNEL=$(curl -sS -X POST "https://slack.com/api/conversations.open" \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-type: application/json; charset=utf-8" \
+            --data "{\"users\":\"$SLACK_USER_ID\"}" \
+            | python3 -c "import sys, json; print(json.load(sys.stdin)['channel']['id'])")
+
+          # 2) DM 보내기 (chat.postMessage)
+          curl -sS -X POST "https://slack.com/api/chat.postMessage" \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-type: application/json; charset=utf-8" \
+            --data "{\"channel\":\"$DM_CHANNEL\",\"text\":\"$TEXT\"}" \
+            | python3 -c "import sys, json; r=json.load(sys.stdin); print('ok='+str(r.get('ok'))); print('error='+str(r.get('error')))"

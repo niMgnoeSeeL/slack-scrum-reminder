@@ -9,39 +9,40 @@ on:
         required: false
         default: "Test: Slack DM from GitHub Actions ✅"
 
-  # 자동 스케줄: LA 기준 전날 1pm에 보낼 거라,
-  # GitHub cron(UTC) 기준으로는 아래 3번 실행하면 됨.
-  # - Tue 1:45pm scrum -> Mon 1pm reminder
-  # - Thu 1:45pm scrum -> Wed 1pm reminder
-  # - Fri 12pm scrum   -> Thu 1pm reminder
+  # 자동 스케줄 (GitHub cron은 UTC 기준)
+  # LA 기준 "전날 1pm"에 리마인더:
+  # - Tue 1:45pm scrum -> Mon 1pm
+  # - Thu 1:45pm scrum -> Wed 1pm
+  # - Fri 12:00pm scrum -> Thu 1pm
   #
-  # ⚠️ 아래는 'PST(UTC-8)' 기준: 1pm PST = 21:00 UTC
+  # 현재(1월) LA는 PST(UTC-8)라서 1pm = 21:00 UTC
   schedule:
-    - cron: "0 21 * * 1"  # Monday 21:00 UTC  = Mon 1pm PST
-    - cron: "0 21 * * 3"  # Wednesday 21:00 UTC = Wed 1pm PST
-    - cron: "0 21 * * 4"  # Thursday 21:00 UTC  = Thu 1pm PST
+    - cron: "0 21 * * 1"  # Mon 21:00 UTC = Mon 1pm PST -> Tue scrum reminder
+    - cron: "0 21 * * 3"  # Wed 21:00 UTC = Wed 1pm PST -> Thu scrum reminder
+    - cron: "0 21 * * 4"  # Thu 21:00 UTC = Thu 1pm PST -> Fri scrum reminder
 
 jobs:
   dm:
     runs-on: ubuntu-latest
+
     steps:
       - name: Decide message
         id: msg
         run: |
-          # LA timezone 기준으로 "내일" 요일에 따라 메시지 생성
+          # LA 시간 기준으로 메시지 결정
           export TZ="America/Los_Angeles"
           TODAY_DOW=$(date +%a)   # Mon/Tue/Wed/Thu/Fri/...
-          # workflow_dispatch면 입력 메시지 그대로
+
+          # 수동 실행(workflow_dispatch)이면 입력 메시지 그대로 사용
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "text=${{ github.event.inputs.test_message }}" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # schedule인 경우: 오늘이 Mon/Wed/Thu 중 하나로 들어오게 되어있음
-          # 내일 scrum 시간은:
-          # Mon -> Tue 1:45pm
-          # Wed -> Thu 1:45pm
-          # Thu -> Fri 12:00pm
+          # schedule인 경우: 오늘이 Mon/Wed/Thu로 들어오게 설정되어 있음
+          # Mon -> Tue scrum(1:45pm)
+          # Wed -> Thu scrum(1:45pm)
+          # Thu -> Fri scrum(12:00pm)
           if [ "$TODAY_DOW" = "Mon" ]; then
             echo "text=Reminder for scrum tomorrow at 1:45 pm." >> $GITHUB_OUTPUT
           elif [ "$TODAY_DOW" = "Wed" ]; then
@@ -49,7 +50,7 @@ jobs:
           elif [ "$TODAY_DOW" = "Thu" ]; then
             echo "text=Reminder for scrum tomorrow at 12:00 pm." >> $GITHUB_OUTPUT
           else
-            # 안전장치: 예상 외 요일이면 아무것도 안 보냄
+            # 안전장치: 예상 외 요일이면 전송하지 않음
             echo "text=" >> $GITHUB_OUTPUT
           fi
 
@@ -60,16 +61,14 @@ jobs:
           SLACK_USER_ID: ${{ secrets.SLACK_USER_ID }}
           TEXT: ${{ steps.msg.outputs.text }}
         run: |
-          # 1) DM 채널 열기 (conversations.open)
-          DM_CHANNEL=$(curl -sS -X POST "https://slack.com/api/conversations.open" \
-            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-            -H "Content-type: application/json; charset=utf-8" \
-            --data "{\"users\":\"$SLACK_USER_ID\"}" \
-            | python3 -c "import sys, json; print(json.load(sys.stdin)['channel']['id'])")
-
-          # 2) DM 보내기 (chat.postMessage)
+          # DM은 conversations.open 없이 User ID(U...)에 바로 postMessage 하는 방식이 가장 단순/안정적
           curl -sS -X POST "https://slack.com/api/chat.postMessage" \
             -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
             -H "Content-type: application/json; charset=utf-8" \
-            --data "{\"channel\":\"$DM_CHANNEL\",\"text\":\"$TEXT\"}" \
-            | python3 -c "import sys, json; r=json.load(sys.stdin); print('ok='+str(r.get('ok'))); print('error='+str(r.get('error')))"
+            --data "{\"channel\":\"$SLACK_USER_ID\",\"text\":\"$TEXT\"}" \
+            | python3 - << 'EOF'
+import sys, json
+r=json.load(sys.stdin)
+print("ok =", r.get("ok"))
+print("error =", r.get("error"))
+EOF

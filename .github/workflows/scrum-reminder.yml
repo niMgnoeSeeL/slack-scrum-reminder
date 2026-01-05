@@ -43,11 +43,11 @@ jobs:
           # Wed 1pm -> Thu scrum(1:45pm)
           # Thu 1pm -> Fri scrum(12:00pm)
           if [ "$DOW" = "Mon" ]; then
-            echo "text=Reminder for scrum tomorrow at 1:45 pm." >> $GITHUB_OUTPUT
+            echo "text=📣 Reminder: In-person scrum tomorrow @ 1:45 pm." >> $GITHUB_OUTPUT
           elif [ "$DOW" = "Wed" ]; then
-            echo "text=Reminder for scrum tomorrow at 1:45 pm." >> $GITHUB_OUTPUT
+            echo "text=📣 Reminder: In-person scrum tomorrow @ 1:45 pm." >> $GITHUB_OUTPUT
           elif [ "$DOW" = "Thu" ]; then
-            echo "text=Reminder for scrum tomorrow at 12:00 pm." >> $GITHUB_OUTPUT
+            echo "text=📣 Reminder: In-person scrum tomorrow @ 12:00 pm." >> $GITHUB_OUTPUT
           else
             echo "text=" >> $GITHUB_OUTPUT
           fi
